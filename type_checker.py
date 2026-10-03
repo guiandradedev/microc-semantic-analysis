@@ -106,7 +106,16 @@ class TypeChecker:
         
 
         if isinstance(stmt, ReturnStmt):
-            return_type = self._check_expr(stmt.value, allow_void=True)
+            if stmt.value is None:
+                if function.return_type != TypeName.VOID:
+                    self.diagnostics.append(SemanticDiagnostic(
+                        SemanticErrorKind.RETURN_MISMATCH,
+                        "A função exige uma expressão de retorno.",
+                        stmt.span
+                    ))
+                return
+
+            return_type = self._check_expr(stmt.value)
             if return_type is not UNKNOWN_TYPE and return_type != function.return_type:
                 self.diagnostics.append(SemanticDiagnostic(
                     SemanticErrorKind.RETURN_MISMATCH,
