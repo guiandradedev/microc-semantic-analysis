@@ -17,6 +17,8 @@ from ast_nodes import (
     PrintStmt,
     CallExpr,
     IdentifierExpr,
+    BinaryExpr,
+    UnaryExpr,
 )
 
 
@@ -129,14 +131,7 @@ class NameResolver:
                     stmt.span
                 ))
             else:
-                var_symbol = Symbol(
-                    name=stmt.name,
-                    kind=SymbolKind.VARIABLE,
-                    type=stmt.type,
-                    declaration=stmt
-                )
-                scope.symbols[stmt.name] = var_symbol
-                stmt.metadata["symbol"] = var_symbol
+                self._set_symbol(stmt, scope, SymbolKind.VARIABLE)
 
             if getattr(stmt, 'initializer', None):
                 self._resolve_expr(stmt.initializer, scope)
@@ -149,12 +144,13 @@ class NameResolver:
         if isinstance(stmt, Assignment):
             self._resolve_expr(stmt.target, scope)
             self._resolve_expr(stmt.value, scope)
+
             return
 
         if isinstance(stmt, IfStmt):
             self._resolve_block(stmt.then_block, scope)
             self._resolve_expr(stmt.condition, scope)
-            if stmt.else_block:
+            if getattr(stmt, 'else_block', None):
                 self._resolve_block(stmt.else_block, scope)
             return
 
@@ -172,7 +168,18 @@ class NameResolver:
                 self._resolve_expr(item, scope)
             return
 
+        print("ver aqui", stmt)
+
     def _resolve_expr(self, expr: Expr, scope: Scope):
+        if isinstance(expr, BinaryExpr):
+            self._resolve_expr(expr.left, scope)
+            self._resolve_expr(expr.right, scope)
+            return
+
+        if isinstance(expr, UnaryExpr):
+            self._resolve_expr(expr.operand, scope)
+            return
+
         if isinstance(expr, CallExpr):
             function = self.functions_table.get(expr.name, None)
             if function:
@@ -200,6 +207,16 @@ class NameResolver:
                 ))
 
             return
+
+    def _set_symbol(self, stmt: Stmt, scope: Scope, kind: SymbolKind):
+        var_symbol = Symbol(
+            name=stmt.name,
+            kind=kind,
+            type=stmt.type,
+            declaration=stmt
+        )
+        scope.symbols[stmt.name] = var_symbol
+        stmt.metadata["symbol"] = var_symbol
 
     def _find_expr(self, expr: Expr, scope: Scope):
         symbol_in_scope = scope.symbols.get(expr.name, None)
