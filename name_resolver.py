@@ -1,20 +1,16 @@
 from __future__ import annotations
-from semantic_errors import SemanticDiagnostic, SemanticErrorKind
+from semantic_errors import SemanticDiagnostic, SemanticErrorKind, SemanticError
 from symbols import FunctionSymbol, Scope, Symbol, SymbolKind
 from ast_nodes import Program, Block, Stmt, VarDecl, CallExpr, IdentifierExpr, Expr
 
 
-def resolve_names(program: Program) -> None:
-    """Construa escopos, símbolos e vínculos entre usos e declarações."""
-
+class NameResolver:
     # 1. Colete todas as assinaturas de função.
     # 2. Valide a existência e a assinatura de main.
     # 3. Percorra os corpos em ordem, criando um escopo para cada bloco.
     # 4. Anote declarações, usos e blocos na AST.
     # 5. Acumule os diagnósticos desta passagem antes de lançar SemanticError.
-    raise NotImplementedError("implemente a resolução de nomes")
-
-class NameResolver:
+    
     def __init__(self, program: Program):
         self.program = program
         self.diagnostics: list[SemanticDiagnostic] = []
@@ -23,7 +19,9 @@ class NameResolver:
 
     def resolve(self):
         self._collect_functions()
-        self._resolve_blocks()
+
+        if self.diagnostics:
+            raise SemanticError(self.diagnostics)
     
     def _collect_functions(self):
         for function in self.program.functions:
@@ -35,7 +33,7 @@ class NameResolver:
                 declaration= function,
                 parameter_types= param_types
             )
-            
+
             function.metadata["symbol"] = func_symbol
 
             # Valida a existência de funções duplicadas
@@ -48,47 +46,50 @@ class NameResolver:
             else:
                 self.functions_table[function.name] = func_symbol
 
+            self._resolve_blocks(func_symbol)            
+            
+
         # Valida a existência e assinatura da função main
         main = self.functions_table.get("main")
         if "main" in self.functions_table:
-            if main.type != "int" and len(main.parameter_types) != 0:
+            if main.type != "int" or len(main.parameter_types) != 0:
                 self.diagnostics.append(SemanticDiagnostic(
                     SemanticErrorKind.INVALID_MAIN,
                     f"Função 'main' deve retornar 'int'",
-                    main.span
+                    self.program.span
                 ))
         else:
             self.diagnostics.append(SemanticDiagnostic(
                 SemanticErrorKind.INVALID_MAIN,
                 f"Função 'main' não declarada",
-                main.span
+                self.program.span
             ))
+            pass
         
-    def _resolve_blocks(self):
-        # for function_name, value in self.functions_table.items():
-        for function in self.program.functions:
-            function_scope = Scope(parent = None)
+    def _resolve_blocks(self, function_symbol: FunctionSymbol):
+        function_scope = Scope(parent = None)
+        function = function_symbol.declaration
 
-            # Valida os parâmetros duplicados
-            for param in function.parameters:
-                if param.name in function_scope.symbols:
-                    self.diagnostics.append(SemanticDiagnostic(
-                        SemanticErrorKind.DUPLICATE_DECLARATION,
-                        f"Parâmetro '{param.name}' já declarado",
-                        param.span
-                    ))
-                else:
-                    param_symbol = Symbol(
-                        name= param.name,
-                        kind= SymbolKind.PARAMETER,
-                        type= param.type,
-                        declaration= param
-                    )
-                    function_scope.symbols[param.name] = param_symbol
-                    param.metadata["symbol"] = param_symbol
+        # Valida os parâmetros duplicados
+        for param in function.parameters:
+            if param.name in function_scope.symbols:
+                self.diagnostics.append(SemanticDiagnostic(
+                    SemanticErrorKind.DUPLICATE_DECLARATION,
+                    f"Parâmetro '{param.name}' já declarado",
+                    param.span
+                ))
+            else:
+                param_symbol = Symbol(
+                    name= param.name,
+                    kind= SymbolKind.PARAMETER,
+                    type= param.type,
+                    declaration= param
+                )
+                function_scope.symbols[param.name] = param_symbol
+                param.metadata["symbol"] = param_symbol
 
-            # Resolve os blocos da função
-            self._resolve_block(function.body, function_scope)
+        # Resolve os blocos da função
+        self._resolve_block(function.body, function_scope)
                 
 
     def _resolve_block(self, block: Block, parent_scope: Scope):
@@ -97,12 +98,6 @@ class NameResolver:
 
         for stmt in block.statements:
             self._resolve_stmt(stmt, new_scope)
-            
-
-        print()
-        print()
-        
-        pass
 
     def _resolve_stmt(self, stmt: Stmt, scope: Scope):
         # Valida se é um bloco e entra recursivo
