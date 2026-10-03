@@ -368,7 +368,7 @@ class Parser:
         while self.check(TokenKind.LOGICAL_OR):
             self.advance()
             right = self.parse_logical_and()
-            left = BinaryExpr(BinaryOperator.OR, left, right, span=self._span(left, right))
+            left = BinaryExpr(BinaryOperator.LOGICAL_OR, left, right, span=self._span(left, right))
         return left
 
     def parse_logical_and(self) -> Expr:
@@ -377,7 +377,7 @@ class Parser:
         while self.check(TokenKind.LOGICAL_AND):
             self.advance()
             right = self.parse_equality()
-            left = BinaryExpr(BinaryOperator.AND, left, right, span=self._span(left, right))
+            left = BinaryExpr(BinaryOperator.LOGICAL_AND, left, right, span=self._span(left, right))
         return left
     
     def parse_equality(self) -> Expr:

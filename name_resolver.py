@@ -1,7 +1,23 @@
 from __future__ import annotations
 from semantic_errors import SemanticDiagnostic, SemanticErrorKind, SemanticError
-from symbols import FunctionSymbol, Scope, Symbol, SymbolKind
-from ast_nodes import Program, Block, Stmt, VarDecl, CallExpr, IdentifierExpr, Expr
+from symbols import FunctionSymbol, Scope, Symbol, SymbolKind, TypeName
+from ast_nodes import (
+    Program, 
+    Block, 
+    Stmt, 
+    VarDecl, 
+    CallExpr, 
+    IdentifierExpr, 
+    Expr, 
+    Assignment, 
+    CallStmt,
+    IfStmt,
+    WhileStmt,
+    ReturnStmt,
+    PrintStmt,
+    CallExpr,
+    IdentifierExpr,
+)
 
 
 class NameResolver:
@@ -15,17 +31,17 @@ class NameResolver:
         self.program = program
         self.diagnostics: list[SemanticDiagnostic] = []
         self.functions_table: dict[str, FunctionSymbol] = {}
-        self.current_scope: Scope | None = None
 
     def resolve(self):
         self._collect_functions()
+        self._resolve_blocks()
 
         if self.diagnostics:
             raise SemanticError(self.diagnostics)
     
     def _collect_functions(self):
         for function in self.program.functions:
-            param_types = [parameter.type for parameter in function.parameters]
+            param_types = tuple(parameter.type for parameter in function.parameters)
             func_symbol = FunctionSymbol(
                 name= function.name, 
                 kind= SymbolKind.FUNCTION,
@@ -40,57 +56,56 @@ class NameResolver:
             if function.name in self.functions_table:
                 self.diagnostics.append(SemanticDiagnostic(
                     SemanticErrorKind.DUPLICATE_FUNCTION,
-                    f"Função '{function.name}' ja declarada",
+                    f"Função '{function.name}' já declarada.",
                     function.span
                 ))
             else:
                 self.functions_table[function.name] = func_symbol
 
-            self._resolve_blocks(func_symbol)            
-            
 
         # Valida a existência e assinatura da função main
-        main = self.functions_table.get("main")
-        if "main" in self.functions_table:
-            if main.type != "int" or len(main.parameter_types) != 0:
-                self.diagnostics.append(SemanticDiagnostic(
-                    SemanticErrorKind.INVALID_MAIN,
-                    f"Função 'main' deve retornar 'int'",
-                    self.program.span
-                ))
-        else:
+        main_symbol = self.functions_table.get("main")
+        if not main_symbol:
             self.diagnostics.append(SemanticDiagnostic(
                 SemanticErrorKind.INVALID_MAIN,
                 f"Função 'main' não declarada",
                 self.program.span
             ))
-            pass
+        elif main_symbol.type != TypeName.INT or len(main_symbol.parameter_types) != 0:
+            self.diagnostics.append(SemanticDiagnostic(
+                SemanticErrorKind.INVALID_MAIN,
+                f"A função main deve possuir a assinatura exata: 'int main()'.",
+                self.program.span
+            ))
         
-    def _resolve_blocks(self, function_symbol: FunctionSymbol):
-        function_scope = Scope(parent = None)
-        function = function_symbol.declaration
+    def _resolve_blocks(self):
+        # for function_name, value in self.functions_table.items():
+        for function in self.program.functions:
+            function_scope = Scope(parent = None)
 
-        # Valida os parâmetros duplicados
-        for param in function.parameters:
-            if param.name in function_scope.symbols:
-                self.diagnostics.append(SemanticDiagnostic(
-                    SemanticErrorKind.DUPLICATE_DECLARATION,
-                    f"Parâmetro '{param.name}' já declarado",
-                    param.span
-                ))
-            else:
-                param_symbol = Symbol(
-                    name= param.name,
-                    kind= SymbolKind.PARAMETER,
-                    type= param.type,
-                    declaration= param
-                )
-                function_scope.symbols[param.name] = param_symbol
-                param.metadata["symbol"] = param_symbol
+            # Valida os parâmetros duplicados
+            for param in function.parameters:
+                if param.name in function_scope.symbols:
+                    self.diagnostics.append(SemanticDiagnostic(
+                        SemanticErrorKind.DUPLICATE_DECLARATION,
+                        f"Parâmetro '{param.name}' já declarado.",
+                        param.span
+                    ))
+                else:
+                    param_symbol = Symbol(
+                        name= param.name,
+                        kind= SymbolKind.PARAMETER,
+                        type= param.type,
+                        declaration= param
+                    )
+                    function_scope.symbols[param.name] = param_symbol
+                    param.metadata["symbol"] = param_symbol
 
-        # Resolve os blocos da função
-        self._resolve_block(function.body, function_scope)
-                
+            function.body.metadata["scope"] = function_scope
+
+            # Resolve os blocos da função
+            for stmt in function.body.statements:
+                self._resolve_stmt(stmt, function_scope)
 
     def _resolve_block(self, block: Block, parent_scope: Scope):
         new_scope = Scope(parent= parent_scope)
@@ -102,8 +117,7 @@ class NameResolver:
     def _resolve_stmt(self, stmt: Stmt, scope: Scope):
         # Valida se é um bloco e entra recursivo
         if isinstance(stmt, Block):
-            new_scope = Scope(parent=scope)
-            self._resolve_block(stmt, new_scope)
+            self._resolve_block(stmt, scope)
             return
 
         # Valida se ja foi declarada
@@ -111,7 +125,7 @@ class NameResolver:
             if stmt.name in scope.symbols:
                 self.diagnostics.append(SemanticDiagnostic(
                     SemanticErrorKind.DUPLICATE_DECLARATION,
-                    f"Variavel '{stmt.name}' ja foi declarada no mesmo escopo",
+                    f"Variavel '{stmt.name}' já foi declarada no mesmo escopo.",
                     stmt.span
                 ))
             else:
@@ -128,9 +142,39 @@ class NameResolver:
                 self._resolve_expr(stmt.initializer, scope)
             return
 
+        if isinstance(stmt, CallStmt):
+            self._resolve_expr(stmt.call, scope)
+            return
+
+        if isinstance(stmt, Assignment):
+            self._resolve_expr(stmt.target, scope)
+            self._resolve_expr(stmt.value, scope)
+            return
+
+        if isinstance(stmt, IfStmt):
+            self._resolve_block(stmt.then_block, scope)
+            self._resolve_expr(stmt.condition, scope)
+            if stmt.else_block:
+                self._resolve_block(stmt.else_block, scope)
+            return
+
+        if isinstance(stmt, WhileStmt):
+            self._resolve_block(stmt.body, scope)
+            self._resolve_expr(stmt.condition, scope)
+            return
+
+        if isinstance(stmt, ReturnStmt):
+            self._resolve_expr(stmt.value, scope)
+            return
+
+        if isinstance(stmt, PrintStmt):
+            for item in stmt.items:
+                self._resolve_expr(item, scope)
+            return
+
     def _resolve_expr(self, expr: Expr, scope: Scope):
         if isinstance(expr, CallExpr):
-            function = self.functions_table.get(expr.name)
+            function = self.functions_table.get(expr.name, None)
             if function:
                 expr.metadata["symbol"] = function
             else:
@@ -140,15 +184,22 @@ class NameResolver:
                     expr.span
                 ))
                                         
-                for arg in expr.arguments:
-                    self._resolve_expr(arg, scope)
+            for arg in expr.arguments:
+                self._resolve_expr(arg, scope)
 
-        elif isinstance(expr, IdentifierExpr):
+            return
+
+        if isinstance(expr, IdentifierExpr):
             found_expr = self._find_expr(expr, scope)
-            print(found_expr)
-                    
-            print(f"Variavel '{expr}' inicializada com identificador '{expr.name}'")
 
+            if not found_expr:
+                self.diagnostics.append(SemanticDiagnostic(
+                    SemanticErrorKind.UNDECLARED_VARIABLE,
+                    f"Variavel '{expr.name}' nao foi declarada",
+                    expr.span
+                ))
+
+            return
 
     def _find_expr(self, expr: Expr, scope: Scope):
         symbol_in_scope = scope.symbols.get(expr.name, None)
@@ -160,10 +211,4 @@ class NameResolver:
                 expr.metadata["symbol"] = symbol_in_scope
                 break
         
-        if not symbol_in_scope:
-            self.diagnostics.append(SemanticDiagnostic(
-                SemanticErrorKind.UNDECLARED_VARIABLE,
-                f"Variavel '{expr.name}' nao foi declarada",
-                expr.span
-            ))
         return symbol_in_scope
